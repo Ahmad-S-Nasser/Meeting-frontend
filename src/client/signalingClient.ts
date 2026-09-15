@@ -122,4 +122,18 @@ export class SignalingClient {
     this.connection.on("MediaStateChanged", handler);
     return () => this.connection.off("MediaStateChanged", handler);
   }
+
+  /** Fires after withAutomaticReconnect() re-establishes the connection - with a NEW
+   * connectionId, since the server already dropped the old one and told the room this
+   * participant left. The caller must rejoin the room, not just resume. */
+  onReconnected(handler: (connectionId?: string) => void): void {
+    this.connection.onreconnected(handler);
+  }
+
+  /** Fires once automatic reconnection gives up (or on a connection that never reconnects) -
+   * not on a deliberate disconnect(), which also triggers this, so callers should ignore it
+   * during their own intentional teardown. */
+  onClose(handler: (error?: Error) => void): void {
+    this.connection.onclose(handler);
+  }
 }

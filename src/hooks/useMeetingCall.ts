@@ -235,6 +235,33 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
         upsertParticipant(connectionId, { micOn: remoteMicOn, cameraOn: remoteCameraOn });
       }));
 
+      // withAutomaticReconnect() gets the transport back, but the server already dropped this
+      // connection from the room and told everyone else this participant left the moment the
+      // old connection died (Hub.OnDisconnectedAsync) - resuming isn't enough, this has to
+      // rejoin as if new. Our own peer connections to others are now one-sided (they already
+      // closed theirs) and will fail ICE eventually on their own, but there's no reason to wait
+      // for that - tear them down now and let a fresh JoinCall rebuild everything.
+      client.onReconnected(() => {
+        if (cleanedUpRef.current) return;
+
+        peersRef.current.forEach(peer => peer.connection.close());
+        peersRef.current.clear();
+        remoteInfoRef.current.clear();
+        setRemoteParticipants([]);
+        setJoining(true);
+
+        client.joinCall(meetingId).catch(() => {
+          setConnectionError("Reconnected, but couldn't rejoin the call. Please refresh.");
+        });
+      });
+
+      // Fires once automatic reconnection gives up, or on any connection that never recovers -
+      // NOT on our own deliberate leave()/unmount, which sets cleanedUpRef first.
+      client.onClose(() => {
+        if (cleanedUpRef.current) return;
+        setConnectionError("Lost connection to the call server.");
+      });
+
       await client.joinCall(meetingId);
       // If there turn out to be no existing participants, ExistingParticipants still fires
       // (with an empty list), which is what clears `joining` above.
