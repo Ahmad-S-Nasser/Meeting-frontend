@@ -33,7 +33,11 @@ export function CallTile({ stream, name, micOn, cameraOn, isLocal = false, class
         justifyContent: "center",
       }}
     >
-      {stream && cameraOn ? (
+      {/* Always mounted whenever a stream exists, even with the camera off - the stream's
+          audio track has no other element playing it, so hiding this on cameraOn=false would
+          silence that participant entirely, not just blank their video. Visibility here is
+          purely cosmetic: CSS display doesn't pause a <video> element's playback. */}
+      {stream && (
         <video
           ref={videoRef}
           autoPlay
@@ -44,9 +48,11 @@ export function CallTile({ stream, name, micOn, cameraOn, isLocal = false, class
             height: "100%",
             objectFit: "cover",
             transform: isLocal ? "scaleX(-1)" : undefined,
+            display: cameraOn ? "block" : "none",
           }}
         />
-      ) : (
+      )}
+      {!(stream && cameraOn) && (
         <div
           style={{
             height: 48,
