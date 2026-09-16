@@ -20,6 +20,11 @@ interface PeerState {
   pendingCandidates: string[];
 }
 
+export interface KickedState {
+  type: "kicked" | "blocked" | "access_denied";
+  reason?: string;
+}
+
 /**
  * Owns the WebRTC mesh for one meeting call: local media, one RTCPeerConnection per remote
  * participant, and the signaling wiring over MeetingCallHub.
@@ -38,6 +43,7 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [joining, setJoining] = useState(true);
+  const [kicked, setKicked] = useState<KickedState | null>(null);
 
   const clientRef = useRef<SignalingClient | null>(null);
   const peersRef = useRef<Map<string, PeerState>>(new Map());
@@ -75,6 +81,19 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     }
     remoteInfoRef.current.delete(connectionId);
     setRemoteParticipants(prev => prev.filter(p => p.connectionId !== connectionId));
+  }, []);
+
+  // Shared by leave() and the kicked/blocked/access-denied handlers below - every one of
+  // them needs to close every peer and release local media, they just differ in whether
+  // they also tell the server (leaveCall) or set a takeover UI state afterward.
+  const teardownPeersAndMedia = useCallback(() => {
+    peersRef.current.forEach(peer => peer.connection.close());
+    peersRef.current.clear();
+    remoteInfoRef.current.clear();
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    localStreamRef.current = null;
+    setLocalStream(null);
+    setRemoteParticipants([]);
   }, []);
 
   const getOrCreatePeer = useCallback((connectionId: string): PeerState => {
@@ -235,6 +254,31 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
         upsertParticipant(connectionId, { micOn: remoteMicOn, cameraOn: remoteCameraOn });
       }));
 
+      // AccessDenied/Kicked/Blocked all end the call the same way from this side - close
+      // every peer, release local media, disconnect - and differ only in which takeover
+      // message the host app should show. cleanedUpRef is set first so the disconnect()
+      // below doesn't also trigger the generic onClose->connectionError path.
+      unsubscribers.push(client.onAccessDenied(({ reason }) => {
+        cleanedUpRef.current = true;
+        teardownPeersAndMedia();
+        client.disconnect();
+        setKicked({ type: "access_denied", reason });
+      }));
+
+      unsubscribers.push(client.onKicked(({ reason }) => {
+        cleanedUpRef.current = true;
+        teardownPeersAndMedia();
+        client.disconnect();
+        setKicked({ type: "kicked", reason: reason ?? undefined });
+      }));
+
+      unsubscribers.push(client.onBlocked(({ reason }) => {
+        cleanedUpRef.current = true;
+        teardownPeersAndMedia();
+        client.disconnect();
+        setKicked({ type: "blocked", reason: reason ?? undefined });
+      }));
+
       // withAutomaticReconnect() gets the transport back, but the server already dropped this
       // connection from the room and told everyone else this participant left the moment the
       // old connection died (Hub.OnDisconnectedAsync) - resuming isn't enough, this has to
@@ -306,13 +350,8 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     cleanedUpRef.current = true;
     clientRef.current?.leaveCall(meetingId);
     clientRef.current?.disconnect();
-    peersRef.current.forEach(peer => peer.connection.close());
-    peersRef.current.clear();
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    localStreamRef.current = null;
-    setLocalStream(null);
-    setRemoteParticipants([]);
-  }, [meetingId]);
+    teardownPeersAndMedia();
+  }, [meetingId, teardownPeersAndMedia]);
 
   return {
     localStream,
@@ -326,5 +365,6 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     connectionError,
     mediaError,
     joining,
+    kicked,
   };
 }

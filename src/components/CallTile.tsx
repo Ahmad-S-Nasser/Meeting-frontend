@@ -7,10 +7,20 @@ export interface CallTileProps {
   cameraOn: boolean;
   isLocal?: boolean;
   className?: string;
+  /** 0..1. Remote tiles only - your own tile has nothing to attenuate. */
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
+  /** Whether the local viewer is this meeting's organizer - gates the Kick/Block buttons. */
+  isHost?: boolean;
+  onKick?: () => void;
+  onBlock?: () => void;
 }
 
 /** No shadcn/Radix here by design - this SDK ships plain markup so it drops into any design system via className. */
-export function CallTile({ stream, name, micOn, cameraOn, isLocal = false, className }: CallTileProps) {
+export function CallTile({
+  stream, name, micOn, cameraOn, isLocal = false, className,
+  volume, onVolumeChange, isHost = false, onKick, onBlock,
+}: CallTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -18,6 +28,14 @@ export function CallTile({ stream, name, micOn, cameraOn, isLocal = false, class
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
+
+  // React can't reliably set `volume` as a JSX attribute - it's imperative-only on
+  // HTMLMediaElement, so this has to go through a ref effect like srcObject above.
+  useEffect(() => {
+    if (videoRef.current && !isLocal) {
+      videoRef.current.volume = volume ?? 1;
+    }
+  }, [volume, isLocal]);
 
   return (
     <div
@@ -91,6 +109,34 @@ export function CallTile({ stream, name, micOn, cameraOn, isLocal = false, class
         </span>
         {!micOn && <MicOffIcon />}
         {!cameraOn && <VideoOffIcon />}
+
+        {!isLocal && onVolumeChange && (
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume ?? 1}
+            onChange={(e) => onVolumeChange(Number(e.target.value))}
+            title="Volume"
+            style={{ width: 48, height: 12 }}
+          />
+        )}
+
+        {isHost && !isLocal && (onKick || onBlock) && (
+          <>
+            {onKick && (
+              <button type="button" onClick={onKick} title="Remove from call - they can rejoin" style={{ fontSize: 11, padding: "1px 6px" }}>
+                Kick
+              </button>
+            )}
+            {onBlock && (
+              <button type="button" onClick={onBlock} title="Remove and block - they can't rejoin" style={{ fontSize: 11, padding: "1px 6px" }}>
+                Block
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

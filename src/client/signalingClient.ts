@@ -17,6 +17,9 @@ type OfferHandler = (fromConnectionId: string, sdp: string) => void;
 type AnswerHandler = (fromConnectionId: string, sdp: string) => void;
 type IceCandidateHandler = (fromConnectionId: string, candidate: string) => void;
 type MediaStateChangedHandler = (connectionId: string, micOn: boolean, cameraOn: boolean) => void;
+type AccessDeniedHandler = (payload: { reason: string }) => void;
+type KickedHandler = (payload: { reason?: string | null }) => void;
+type BlockedHandler = (payload: { reason?: string | null }) => void;
 
 /**
  * A thin, typed wrapper around the one SignalR hub this SDK talks to - MeetingCallHub. Unlike
@@ -121,6 +124,27 @@ export class SignalingClient {
   onMediaStateChanged(handler: MediaStateChangedHandler): () => void {
     this.connection.on("MediaStateChanged", handler);
     return () => this.connection.off("MediaStateChanged", handler);
+  }
+
+  /** JoinCall re-checks access every time (not just at token-mint time), so a token minted
+   * before a block/removal but presented after it lands here instead of silently joining. */
+  onAccessDenied(handler: AccessDeniedHandler): () => void {
+    this.connection.on("AccessDenied", handler);
+    return () => this.connection.off("AccessDenied", handler);
+  }
+
+  /** Pushed by the organizer's kick action - disconnects now, but this participant CAN
+   * rejoin (kick isn't persisted, unlike block). */
+  onKicked(handler: KickedHandler): () => void {
+    this.connection.on("Kicked", handler);
+    return () => this.connection.off("Kicked", handler);
+  }
+
+  /** Pushed by the organizer's block action - disconnects now AND this participant can
+   * never rejoin this meeting again. */
+  onBlocked(handler: BlockedHandler): () => void {
+    this.connection.on("Blocked", handler);
+    return () => this.connection.off("Blocked", handler);
   }
 
   /** Fires after withAutomaticReconnect() re-establishes the connection - with a NEW
