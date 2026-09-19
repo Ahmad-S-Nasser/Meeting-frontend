@@ -62,7 +62,7 @@ export default function App() {
 
   if (participantToken && preview) {
     return (
-      <div style={{ height: "100vh", background: "#0f172a", color: "white" }}>
+      <div style={{ height: "100vh", background: "var(--bg-dark)", color: "var(--text-main)" }}>
         <CallRoom
           apiBaseUrl={COON_MEETING_API_BASE_URL}
           meetingId={preview.meetingId}
@@ -76,22 +76,30 @@ export default function App() {
   if (!preview) {
     return (
       <Centered>
-        <p>Loading…</p>
+        <p className="text-muted">Loading…</p>
       </Centered>
     );
   }
 
   return (
     <Centered>
-      <h1 style={{ fontSize: 22, marginBottom: 4 }}>{preview.meetingTitle}</h1>
-      <p style={{ color: "#64748b", marginTop: 0, marginBottom: 20 }}>You're joining as a guest.</p>
-      <form onSubmit={handleJoin} style={{ display: "flex", flexDirection: "column", gap: 12, width: 280 }}>
-        <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} required />
-        {submitError && <p style={{ color: "#b91c1c", fontSize: 14 }}>{submitError}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Joining…" : "Join call"}
-        </button>
-      </form>
+      <div className="auth-card" style={{ textAlign: "left" }}>
+        <h1 style={{ fontSize: 22 }}>{preview.meetingTitle}</h1>
+        <p className="text-small text-muted">You're joining as a guest.</p>
+        <form onSubmit={handleJoin} className="stack" style={{ marginTop: 20 }}>
+          <input
+            className="input-field"
+            placeholder="Your name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+          {submitError && <p className="text-error">{submitError}</p>}
+          <button className="btn-primary" type="submit" disabled={submitting}>
+            {submitting ? "Joining…" : "Join call"}
+          </button>
+        </form>
+      </div>
     </Centered>
   );
 }
@@ -101,11 +109,9 @@ function Centered({ children }: { children: React.ReactNode }) {
     <div
       style={{
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         height: "100vh",
-        fontFamily: "system-ui, sans-serif",
         textAlign: "center",
         padding: 24,
       }}

@@ -1,0 +1,351 @@
+:root {
+  --primary: #0e4a6d;
+  --primary-hover: #073b5a;
+  --secondary: #2ab7ca;
+  --accent: #00d2d3;
+  --accent-orange: #f97316;
+  --accent-green: #10b981;
+  --danger: #f87171;
+  --danger-strong: #ef4444;
+  --bg-dark: #0f172a;
+  --bg-card: #1e293b;
+  --border-soft: rgba(255, 255, 255, 0.1);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --font-sans:
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
+    "Helvetica Neue", sans-serif;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 20px rgba(42, 183, 202, 0.2);
+  --radius: 0.5rem;
+  --radius-lg: 1.5rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  background-image: radial-gradient(at 0 0, rgba(14, 74, 109, 0.4) 0, transparent 50%),
+    radial-gradient(at 100% 0, rgba(42, 183, 202, 0.3) 0, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(249, 115, 22, 0.15) 0, transparent 50%),
+    radial-gradient(at 0 100%, rgba(16, 185, 129, 0.15) 0, transparent 50%);
+  background-attachment: fixed;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Layout */
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.centered-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Cards */
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.glow-card {
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s,
+    border-color 0.2s;
+}
+
+.glow-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Buttons */
+
+.btn-primary,
+.btn-secondary,
+.btn-danger {
+  border-radius: var(--radius);
+  padding: 0.65rem 1.25rem;
+  font-weight: 600;
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background-color: var(--secondary);
+  color: #05222a;
+  box-shadow: var(--shadow-glow);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 0 30px rgba(42, 183, 202, 0.5);
+}
+
+.btn-secondary {
+  border-color: var(--text-muted);
+  color: var(--text-main);
+  background-color: transparent;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--secondary);
+  color: var(--secondary);
+  background-color: rgba(42, 183, 202, 0.05);
+}
+
+.btn-danger {
+  border-color: var(--danger-strong);
+  color: var(--danger);
+  background-color: transparent;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* Forms */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.input-field {
+  color: var(--text-main);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.input-field:focus {
+  border-color: var(--secondary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(42, 183, 202, 0.2);
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+}
+
+.radio-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.radio-option input {
+  margin-top: 0.2rem;
+  accent-color: var(--secondary);
+}
+
+fieldset.field-group {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin: 0 0 1rem;
+}
+
+fieldset.field-group legend {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0 0.35rem;
+}
+
+/* Text helpers */
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.text-small {
+  font-size: 0.85rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  margin-left: 0.5rem;
+}
+
+.badge-danger {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.list-plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* App shell */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-nav {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.app-nav a {
+  color: var(--text-main);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.app-nav a:hover {
+  color: var(--secondary);
+}
+
+.app-main {
+  flex: 1;
+  padding: 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.meeting-row {
+  display: block;
+}
+
+.meeting-row:hover {
+  color: var(--text-main);
+}

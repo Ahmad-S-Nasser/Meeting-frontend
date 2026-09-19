@@ -111,16 +111,19 @@ export function CallTile({
         {!cameraOn && <VideoOffIcon />}
 
         {!isLocal && onVolumeChange && (
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={volume ?? 1}
-            onChange={(e) => onVolumeChange(Number(e.target.value))}
-            title="Volume"
-            style={{ width: 48, height: 12 }}
-          />
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }} title="Volume">
+            <VolumeIcon muted={(volume ?? 1) === 0} />
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={volume ?? 1}
+              onChange={(e) => onVolumeChange(Number(e.target.value))}
+              aria-label="Volume"
+              style={{ width: 60, height: 14, accentColor: "#fff", cursor: "pointer" }}
+            />
+          </span>
         )}
 
         {isHost && !isLocal && (onKick || onBlock) && (
@@ -154,6 +157,20 @@ function VideoOffIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+function VolumeIcon({ muted }: { muted: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      {muted ? (
+        <line x1="23" y1="9" x2="17" y2="15" />
+      ) : (
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      )}
+      {muted && <line x1="17" y1="9" x2="23" y2="15" />}
     </svg>
   );
 }
