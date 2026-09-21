@@ -68,6 +68,17 @@ export default function App() {
           meetingId={preview.meetingId}
           participantToken={participantToken}
           participantName={name}
+          onRecordingAvailable={(blob, meta) => {
+            // Minimal demo behavior - a real integration decides its own storage; this SDK
+            // never does it for you. Triggering a download is the simplest real persistence
+            // path available with no backend at all, which is all this example app has.
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `meeting-recording-${meta.startedAt.toISOString().replace(/[:.]/g, "-")}.webm`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
         />
       </div>
     );

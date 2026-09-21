@@ -17,6 +17,9 @@ type OfferHandler = (fromConnectionId: string, sdp: string) => void;
 type AnswerHandler = (fromConnectionId: string, sdp: string) => void;
 type IceCandidateHandler = (fromConnectionId: string, candidate: string) => void;
 type MediaStateChangedHandler = (connectionId: string, micOn: boolean, cameraOn: boolean) => void;
+type ScreenShareStateChangedHandler = (connectionId: string, isSharing: boolean) => void;
+type ChatMessageHandler = (fromConnectionId: string, participantId: string, name: string, text: string, sentAt: string) => void;
+type RecordingStateChangedHandler = (connectionId: string, isRecording: boolean) => void;
 type AccessDeniedHandler = (payload: { reason: string }) => void;
 type KickedHandler = (payload: { reason?: string | null }) => void;
 type BlockedHandler = (payload: { reason?: string | null }) => void;
@@ -124,6 +127,45 @@ export class SignalingClient {
   onMediaStateChanged(handler: MediaStateChangedHandler): () => void {
     this.connection.on("MediaStateChanged", handler);
     return () => this.connection.off("MediaStateChanged", handler);
+  }
+
+  async updateScreenShareState(meetingId: string, isSharing: boolean): Promise<void> {
+    try {
+      await this.connection.invoke("UpdateScreenShareState", meetingId, isSharing);
+    } catch {
+      // Liveness only, same reasoning as updateMediaState - a missed broadcast is
+      // self-correcting on the next call (e.g. a late joiner triggers a re-broadcast).
+    }
+  }
+
+  onScreenShareStateChanged(handler: ScreenShareStateChangedHandler): () => void {
+    this.connection.on("ScreenShareStateChanged", handler);
+    return () => this.connection.off("ScreenShareStateChanged", handler);
+  }
+
+  async sendChatMessage(meetingId: string, text: string): Promise<void> {
+    await this.connection.invoke("SendChatMessage", meetingId, text);
+  }
+
+  onChatMessage(handler: ChatMessageHandler): () => void {
+    this.connection.on("ReceiveChatMessage", handler);
+    return () => this.connection.off("ReceiveChatMessage", handler);
+  }
+
+  /** This is a consent-notice broadcast only - it never carries or touches the recorded media
+      itself, which stays entirely on the recording participant's own machine until their host
+      app does something with the finished Blob (see CallRoom's onRecordingAvailable). */
+  async updateRecordingState(meetingId: string, isRecording: boolean): Promise<void> {
+    try {
+      await this.connection.invoke("UpdateRecordingState", meetingId, isRecording);
+    } catch {
+      // Liveness only, same reasoning as updateMediaState/updateScreenShareState.
+    }
+  }
+
+  onRecordingStateChanged(handler: RecordingStateChangedHandler): () => void {
+    this.connection.on("RecordingStateChanged", handler);
+    return () => this.connection.off("RecordingStateChanged", handler);
   }
 
   /** JoinCall re-checks access every time (not just at token-mint time), so a token minted

@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMeetingCall, type UseMeetingCallOptions } from "../hooks/useMeetingCall";
 import { CallTile } from "./CallTile";
+import { ControlBar } from "./ControlBar";
+import { CallGrid, type CallGridItem } from "./CallGrid";
+import { SidePanel, type SidePanelTab, type SidePanelTabDef } from "./SidePanel";
+import { ParticipantListPanel } from "./ParticipantListPanel";
+import { ChatPanel } from "./ChatPanel";
+import { ParticipantsIcon, ScreenShareIcon, ChatIcon, RecordIcon } from "./icons";
 
 export interface CallRoomProps extends UseMeetingCallOptions {
   /** Called after leave() has torn down media and the connection - close your own modal/layout here. */
@@ -34,9 +40,45 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
     mediaError,
     joining,
     kicked,
+    availableDevices,
+    selectedCameraId,
+    selectedMicId,
+    switchCamera,
+    switchMicrophone,
+    isScreenSharing,
+    localScreenShareStream,
+    startScreenShare,
+    stopScreenShare,
+    chatMessages,
+    sendChatMessage,
+    isRecording,
+    recordingParticipantId,
+    startRecording,
+    stopRecording,
   } = useMeetingCall(callOptions);
 
   const [volumes, setVolumes] = useState<Record<string, number>>({});
+  // Local-only UI state - never broadcast, so pinning is each viewer's own choice and has no
+  // effect on what anyone else sees.
+  const [pinnedConnectionId, setPinnedConnectionId] = useState<string | null>(null);
+  const [openPanel, setOpenPanel] = useState<SidePanelTab | null>(null);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const seenChatCountRef = useRef(0);
+
+  // Counts only messages that arrived while the chat tab wasn't the one open - a message sent
+  // from this same tile (isLocal) never counts as "unread" for its own sender.
+  useEffect(() => {
+    const newMessages = chatMessages.slice(seenChatCountRef.current);
+    seenChatCountRef.current = chatMessages.length;
+    if (openPanel !== "chat") {
+      const incoming = newMessages.filter((m) => !m.isLocal).length;
+      if (incoming > 0) setUnreadChatCount((c) => c + incoming);
+    }
+  }, [chatMessages, openPanel]);
+
+  useEffect(() => {
+    if (openPanel === "chat") setUnreadChatCount(0);
+  }, [openPanel]);
 
   const handleLeave = () => {
     leave();
@@ -67,42 +109,272 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
     );
   }
 
+  // Only one sharer at a time, by design - a screen share always takes the focus slot over a
+  // manual pin, and the pin is left untouched (not cleared) so it's restored automatically once
+  // sharing ends, per the confirmed decision.
+  const remoteSharer = remoteParticipants.find((p) => p.screenShareStream);
+  const anySharing = isScreenSharing || !!remoteSharer;
+
+  const gridItems: CallGridItem[] = [];
+
+  if (isScreenSharing && localScreenShareStream) {
+    gridItems.push({
+      key: "local-screen",
+      focused: true,
+      content: <CallTile stream={localScreenShareStream} name={localParticipantName} micOn cameraOn isLocal variant="screen" />,
+    });
+  }
+
+  gridItems.push({
+    key: "local",
+    focused: false,
+    content: <CallTile stream={localStream} name={localParticipantName} micOn={micOn} cameraOn={cameraOn} isLocal />,
+  });
+
+  remoteParticipants.forEach((p) => {
+    if (p.screenShareStream) {
+      gridItems.push({
+        key: `${p.connectionId}-screen`,
+        focused: true,
+        content: <CallTile stream={p.screenShareStream} name={p.name} micOn cameraOn variant="screen" />,
+      });
+    }
+    gridItems.push({
+      key: p.connectionId,
+      focused: !anySharing && p.connectionId === pinnedConnectionId,
+      content: (
+        <CallTile
+          stream={p.stream}
+          name={p.name}
+          micOn={p.micOn}
+          cameraOn={p.cameraOn}
+          volume={volumes[p.connectionId]}
+          onVolumeChange={(v: number) => setVolumes((prev) => ({ ...prev, [p.connectionId]: v }))}
+          isHost={isHost}
+          onKick={onKickParticipant ? () => onKickParticipant(p.participantId) : undefined}
+          onBlock={onBlockParticipant ? () => onBlockParticipant(p.participantId) : undefined}
+          pinned={p.connectionId === pinnedConnectionId}
+          onTogglePin={() => setPinnedConnectionId((id) => (id === p.connectionId ? null : p.connectionId))}
+          connectionQuality={p.connectionQuality}
+        />
+      ),
+    });
+  });
+
+  const recordingParticipantName = recordingParticipantId === "local"
+    ? localParticipantName
+    : remoteParticipants.find((p) => p.connectionId === recordingParticipantId)?.name ?? "Someone";
+
+  const panelTabs: SidePanelTabDef[] = [
+    { id: "participants", label: "Participants" },
+    { id: "chat", label: "Chat", badge: unreadChatCount },
+  ];
+
   return (
     <div className={className} style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-        {mediaError && (
-          <div style={{ marginBottom: 12, fontSize: 12, color: "#b45309" }}>{mediaError}</div>
-        )}
+      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: 16, overflowY: "auto" }}>
+          {/* Shown to every participant, not just whoever's recording - this is the actual
+              consent notice, not a convenience for the recorder's own screen. */}
+          {isRecording && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                alignSelf: "center",
+                marginBottom: 12,
+                padding: "4px 12px",
+                borderRadius: 999,
+                background: "var(--cm-danger, #dc2626)",
+                color: "#fff",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              <RecordIcon size={10} />
+              {recordingParticipantId === "local" ? "You're recording this call" : `${recordingParticipantName} is recording this call`}
+            </div>
+          )}
+          {mediaError && (
+            <div style={{ marginBottom: 12, fontSize: 12, color: "#b45309" }}>{mediaError}</div>
+          )}
 
-        {joining ? (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>
-            Joining call…
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
-            <CallTile stream={localStream} name={localParticipantName} micOn={micOn} cameraOn={cameraOn} isLocal />
-            {remoteParticipants.map((p) => (
-              <CallTile
-                key={p.connectionId}
-                stream={p.stream}
-                name={p.name}
-                micOn={p.micOn}
-                cameraOn={p.cameraOn}
-                volume={volumes[p.connectionId]}
-                onVolumeChange={(v) => setVolumes((prev) => ({ ...prev, [p.connectionId]: v }))}
+          {joining ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#888" }}>
+              Joining call…
+            </div>
+          ) : (
+            <CallGrid items={gridItems} />
+          )}
+        </div>
+
+        {openPanel && (
+          <SidePanel activeTab={openPanel} tabs={panelTabs} onSelectTab={setOpenPanel} onClose={() => setOpenPanel(null)}>
+            {openPanel === "participants" && (
+              <ParticipantListPanel
+                localName={localParticipantName}
+                localMicOn={micOn}
+                localCameraOn={cameraOn}
+                participants={remoteParticipants}
                 isHost={isHost}
-                onKick={onKickParticipant ? () => onKickParticipant(p.participantId) : undefined}
-                onBlock={onBlockParticipant ? () => onBlockParticipant(p.participantId) : undefined}
+                onKick={onKickParticipant}
+                onBlock={onBlockParticipant}
+                pinnedConnectionId={pinnedConnectionId}
+                onTogglePin={(id) => setPinnedConnectionId((cur) => (cur === id ? null : id))}
               />
-            ))}
-          </div>
+            )}
+            {openPanel === "chat" && <ChatPanel messages={chatMessages} onSend={sendChatMessage} />}
+          </SidePanel>
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, padding: 16, borderTop: "1px solid #333" }}>
-        <button onClick={toggleMic} title={micOn ? "Mute" : "Unmute"}>{micOn ? "Mic on" : "Mic off"}</button>
-        <button onClick={toggleCamera} title={cameraOn ? "Turn camera off" : "Turn camera on"}>{cameraOn ? "Camera on" : "Camera off"}</button>
-        <button onClick={handleLeave} title="Leave call">Leave</button>
+      <div style={{ padding: 16, borderTop: "1px solid var(--cm-border, #333)" }}>
+        <ControlBar
+          micOn={micOn}
+          cameraOn={cameraOn}
+          onToggleMic={toggleMic}
+          onToggleCamera={toggleCamera}
+          onLeave={handleLeave}
+          availableDevices={availableDevices}
+          selectedCameraId={selectedCameraId}
+          selectedMicId={selectedMicId}
+          onSelectCamera={switchCamera}
+          onSelectMicrophone={switchMicrophone}
+        >
+          {isHost && (
+            <button
+              type="button"
+              onClick={() => (isRecording ? stopRecording() : startRecording())}
+              title={isRecording ? "Stop recording" : "Start recording"}
+              aria-label={isRecording ? "Stop recording" : "Start recording"}
+              aria-pressed={isRecording}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 40,
+                height: 40,
+                borderRadius: "50%",
+                border: "none",
+                background: isRecording ? "var(--cm-danger, #dc2626)" : "transparent",
+                color: "var(--cm-text, #fff)",
+                cursor: "pointer",
+              }}
+            >
+              <RecordIcon />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+            disabled={!isScreenSharing && !!remoteSharer}
+            title={isScreenSharing ? "Stop sharing your screen" : remoteSharer ? `${remoteSharer.name} is already sharing` : "Share your screen"}
+            aria-label={isScreenSharing ? "Stop sharing your screen" : "Share your screen"}
+            aria-pressed={isScreenSharing}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              border: "none",
+              background: isScreenSharing ? "var(--cm-accent, #2563eb)" : "transparent",
+              color: "var(--cm-text, #fff)",
+              cursor: !isScreenSharing && remoteSharer ? "not-allowed" : "pointer",
+              opacity: !isScreenSharing && remoteSharer ? 0.4 : 1,
+            }}
+          >
+            <ScreenShareIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpenPanel((p) => (p === "chat" ? null : "chat"))}
+            title="Chat"
+            aria-label="Chat"
+            aria-pressed={openPanel === "chat"}
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              border: "none",
+              background: openPanel === "chat" ? "var(--cm-control-active-bg, rgba(255,255,255,0.15))" : "transparent",
+              color: "var(--cm-text, #fff)",
+              cursor: "pointer",
+            }}
+          >
+            <ChatIcon />
+            {unreadChatCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -2,
+                  right: -2,
+                  minWidth: 16,
+                  height: 16,
+                  padding: "0 4px",
+                  borderRadius: 999,
+                  background: "var(--cm-accent, #2563eb)",
+                  color: "#fff",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {unreadChatCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpenPanel((p) => (p === "participants" ? null : "participants"))}
+            title="Participants"
+            aria-label="Participants"
+            aria-pressed={openPanel === "participants"}
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              border: "none",
+              background: openPanel === "participants" ? "var(--cm-control-active-bg, rgba(255,255,255,0.15))" : "transparent",
+              color: "var(--cm-text, #fff)",
+              cursor: "pointer",
+            }}
+          >
+            <ParticipantsIcon />
+            <span
+              style={{
+                position: "absolute",
+                top: -2,
+                right: -2,
+                minWidth: 16,
+                height: 16,
+                padding: "0 4px",
+                borderRadius: 999,
+                background: "var(--cm-accent, #2563eb)",
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {remoteParticipants.length + 1}
+            </span>
+          </button>
+        </ControlBar>
       </div>
     </div>
   );

@@ -1,4 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { MicOffIcon, CameraOffIcon, VolumeIcon, PinIcon } from "./icons";
+import { ConnectionQualityIndicator } from "./ConnectionQualityIndicator";
+import type { ConnectionQuality } from "../types";
 
 export interface CallTileProps {
   stream: MediaStream | null;
@@ -14,14 +17,27 @@ export interface CallTileProps {
   isHost?: boolean;
   onKick?: () => void;
   onBlock?: () => void;
+  /** Pinning is local-only UI state (see CallRoom) - not broadcast, so every viewer can pin
+      independently without affecting anyone else's view. */
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  /** Remote tiles only - your own connection to yourself has nothing to measure. */
+  connectionQuality?: ConnectionQuality;
+  /** "screen" suppresses the avatar-fallback/mic-camera-off/volume affordances, which don't
+      mean anything for a screen share, and labels the tile as "{name}'s screen". Defaults to
+      "camera". */
+  variant?: "camera" | "screen";
 }
 
 /** No shadcn/Radix here by design - this SDK ships plain markup so it drops into any design system via className. */
 export function CallTile({
   stream, name, micOn, cameraOn, isLocal = false, className,
   volume, onVolumeChange, isHost = false, onKick, onBlock,
+  pinned = false, onTogglePin, connectionQuality, variant = "camera",
 }: CallTileProps) {
+  const isScreen = variant === "screen";
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [hovering, setHovering] = useState(false);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -40,17 +56,45 @@ export function CallTile({
   return (
     <div
       className={className}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
       style={{
         position: "relative",
         aspectRatio: "16 / 9",
-        background: "#1e1e1e",
-        borderRadius: 8,
+        background: "var(--cm-tile-bg, #1e1e1e)",
+        borderRadius: "var(--cm-radius, 8px)",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
+      {onTogglePin && (hovering || pinned) && (
+        <button
+          type="button"
+          onClick={onTogglePin}
+          title={pinned ? "Unpin" : "Pin for me"}
+          aria-label={pinned ? "Unpin" : "Pin for me"}
+          aria-pressed={pinned}
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 26,
+            height: 26,
+            borderRadius: "50%",
+            border: "none",
+            background: pinned ? "var(--cm-accent, #2563eb)" : "rgba(0,0,0,0.6)",
+            color: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          <PinIcon filled={pinned} />
+        </button>
+      )}
       {/* Always mounted whenever a stream exists, even with the camera off - the stream's
           audio track has no other element playing it, so hiding this on cameraOn=false would
           silence that participant entirely, not just blank their video. Visibility here is
@@ -64,20 +108,21 @@ export function CallTile({
           style={{
             width: "100%",
             height: "100%",
-            objectFit: "cover",
+            objectFit: isScreen ? "contain" : "cover",
+            background: isScreen ? "#000" : undefined,
             transform: isLocal ? "scaleX(-1)" : undefined,
-            display: cameraOn ? "block" : "none",
+            display: isScreen || cameraOn ? "block" : "none",
           }}
         />
       )}
-      {!(stream && cameraOn) && (
+      {!isScreen && !(stream && cameraOn) && (
         <div
           style={{
             height: 48,
             width: 48,
             borderRadius: "50%",
-            background: "#3a3a3a",
-            color: "#fff",
+            background: "var(--cm-avatar-bg, #3a3a3a)",
+            color: "var(--cm-text, #fff)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -105,12 +150,13 @@ export function CallTile({
         }}
       >
         <span style={{ maxWidth: "10rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {isLocal ? `${name} (You)` : name}
+          {isScreen ? `${name}'s screen` : isLocal ? `${name} (You)` : name}
         </span>
-        {!micOn && <MicOffIcon />}
-        {!cameraOn && <VideoOffIcon />}
+        {!isScreen && !micOn && <MicOffIcon />}
+        {!isScreen && !cameraOn && <CameraOffIcon />}
+        {!isScreen && !isLocal && connectionQuality && <ConnectionQualityIndicator quality={connectionQuality} />}
 
-        {!isLocal && onVolumeChange && (
+        {!isScreen && !isLocal && onVolumeChange && (
           <span style={{ display: "flex", alignItems: "center", gap: 3 }} title="Volume">
             <VolumeIcon muted={(volume ?? 1) === 0} />
             <input
@@ -126,7 +172,7 @@ export function CallTile({
           </span>
         )}
 
-        {isHost && !isLocal && (onKick || onBlock) && (
+        {!isScreen && isHost && !isLocal && (onKick || onBlock) && (
           <>
             {onKick && (
               <button type="button" onClick={onKick} title="Remove from call - they can rejoin" style={{ fontSize: 11, padding: "1px 6px" }}>
@@ -142,35 +188,5 @@ export function CallTile({
         )}
       </div>
     </div>
-  );
-}
-
-function MicOffIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" /><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
-    </svg>
-  );
-}
-
-function VideoOffIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" /><line x1="1" y1="1" x2="23" y2="23" />
-    </svg>
-  );
-}
-
-function VolumeIcon({ muted }: { muted: boolean }) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      {muted ? (
-        <line x1="23" y1="9" x2="17" y2="15" />
-      ) : (
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      )}
-      {muted && <line x1="17" y1="9" x2="23" y2="15" />}
-    </svg>
   );
 }
