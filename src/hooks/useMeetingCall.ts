@@ -54,15 +54,90 @@ function bucketConnectionQuality(rttMs: number | undefined, lossRatio: number): 
   return "poor";
 }
 
-/** Not every browser supports every codec combination - fall back through a list rather than
-    hardcoding one and letting MediaRecorder throw. An empty string tells MediaRecorder to pick
-    its own default, still better than a hard failure. */
-function pickRecorderMimeType(includeVideo: boolean): string {
-  if (typeof MediaRecorder === "undefined") return "";
+/** Preference order, best first. MP4 leads because it plays in ordinary desktop players (Windows
+    Media Player, QuickTime) and transcription tools and is seekable; a MediaRecorder WebM has no
+    duration/seek index, so many players show it as unseekable or refuse it. WebM stays as the
+    fallback for browsers that can't record MP4. */
+function recorderMimeCandidates(includeVideo: boolean): string[] {
+  if (typeof MediaRecorder === "undefined") return [];
   const candidates = includeVideo
-    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
-    : ["audio/webm;codecs=opus", "audio/webm"];
-  return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
+    ? [
+        "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+        "video/mp4",
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ]
+    : ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
+  return candidates.filter((type) => MediaRecorder.isTypeSupported?.(type));
+}
+
+/** isTypeSupported can say yes and the constructor/encoder still fail on a given machine (no
+    H.264 encoder, say), so try each supported type in turn before giving up to MediaRecorder's own
+    default. */
+function createRecorder(stream: MediaStream, includeVideo: boolean): MediaRecorder {
+  for (const mimeType of recorderMimeCandidates(includeVideo)) {
+    try {
+      return new MediaRecorder(stream, { mimeType });
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return new MediaRecorder(stream);
+}
+
+/** Draws `el` into the box, scaled to fill it ("cover", cropping the overflow - right for a
+    camera) or to fit inside it ("contain", letterboxed - right for a screen share, where
+    cropping would cut off content). */
+function drawVideoInBox(
+  ctx: CanvasRenderingContext2D, el: HTMLVideoElement,
+  x: number, y: number, w: number, h: number, fit: "cover" | "contain",
+) {
+  const vw = el.videoWidth;
+  const vh = el.videoHeight;
+  if (!vw || !vh) return;
+  const scale = fit === "cover" ? Math.max(w / vw, h / vh) : Math.min(w / vw, h / vh);
+  const dw = vw * scale;
+  const dh = vh * scale;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.drawImage(el, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  ctx.restore();
+}
+
+/** Name tag and, for a tile with no live video, an initial-in-a-circle so the recording shows
+    who is speaking even when their camera is off (a disabled track otherwise records as black). */
+function drawTileChrome(
+  ctx: CanvasRenderingContext2D, name: string, showAvatar: boolean,
+  x: number, y: number, w: number, h: number,
+) {
+  if (showAvatar) {
+    ctx.fillStyle = "#1e1e1e";
+    ctx.fillRect(x, y, w, h);
+    const r = Math.min(w, h) * 0.18;
+    ctx.fillStyle = "#3a3a3a";
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h / 2, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `600 ${Math.round(r)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(name.charAt(0).toUpperCase() || "?", x + w / 2, y + h / 2);
+  }
+  const fontPx = Math.max(12, Math.round(h * 0.06));
+  ctx.font = `${fontPx}px sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const label = name.length > 28 ? `${name.slice(0, 27)}…` : name;
+  const pad = fontPx * 0.5;
+  const tagW = ctx.measureText(label).width + pad * 2;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x + 8, y + h - fontPx - pad * 2 - 8, tagW, fontPx + pad * 2);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, x + 8 + pad, y + h - 8 - pad - fontPx / 2);
 }
 
 /**
@@ -771,7 +846,7 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     recordingAudioContextRef.current = null;
     if (recordingDrawIntervalRef.current) clearInterval(recordingDrawIntervalRef.current);
     recordingDrawIntervalRef.current = null;
-    recordingVideoElsRef.current.forEach((el) => { el.srcObject = null; });
+    recordingVideoElsRef.current.forEach((el) => { el.srcObject = null; el.remove(); });
     recordingVideoElsRef.current.clear();
     recordingCanvasRef.current = null;
     mediaRecorderRef.current = null;
@@ -804,7 +879,9 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
 
   const startRecording = useCallback((recordingOptions?: { includeVideo?: boolean }) => {
     if (mediaRecorderRef.current) return; // already recording
-    const includeVideo = recordingOptions?.includeVideo ?? false;
+    // Video by default - it used to default to audio-only, which is why recordings had sound but
+    // no picture. Pass { includeVideo: false } explicitly for a smaller audio-only file.
+    const includeVideo = recordingOptions?.includeVideo ?? true;
 
     const audioContext = new AudioContext();
     const dest = audioContext.createMediaStreamDestination();
@@ -834,50 +911,88 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
       const ctx = canvas.getContext("2d");
       recordingCanvasRef.current = canvas;
 
+      // Offscreen <video> elements this hook owns, one per stream being composited. Attached to
+      // the page (invisible) and explicitly play()ed - relying on autoplay of a detached element
+      // is exactly the kind of thing that works in one browser and silently stays black in another.
       const getOrCreateVideoEl = (key: string, stream: MediaStream): HTMLVideoElement => {
         let el = recordingVideoElsRef.current.get(key);
         if (!el) {
           el = document.createElement("video");
-          el.autoplay = true;
           el.muted = true;
           el.playsInline = true;
+          el.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+          document.body.appendChild(el);
           recordingVideoElsRef.current.set(key, el);
         }
-        if (el.srcObject !== stream) el.srcObject = stream;
+        if (el.srcObject !== stream) {
+          el.srcObject = stream;
+          el.play().catch(() => { /* retried on the next draw tick */ });
+        } else if (el.paused) {
+          el.play().catch(() => { /* still not allowed to - nothing more to do */ });
+        }
         return el;
       };
 
-      // 5fps is plenty for "a usable recording of who said what and roughly what was on
-      // screen" - this doesn't need to look like the live UI grid, just be watchable.
+      interface Tile { key: string; name: string; el: HTMLVideoElement; showAvatar: boolean }
+
+      // ~15fps: smooth enough to follow a conversation and a shared screen without the encoder
+      // work of a full 30fps composite. Doesn't need to look like the live grid, just be watchable.
       recordingDrawIntervalRef.current = setInterval(() => {
         if (!ctx) return;
-        const els: HTMLVideoElement[] = [];
-        if (localStreamRef.current) els.push(getOrCreateVideoEl("local", localStreamRef.current));
+
+        const tiles: Tile[] = [];
+        const localStream = localStreamRef.current;
+        if (localStream) {
+          const track = localStream.getVideoTracks()[0];
+          tiles.push({
+            key: "local",
+            name: participantName,
+            el: getOrCreateVideoEl("local", localStream),
+            showAvatar: !track || !track.enabled,
+          });
+        }
+        const screens: Tile[] = [];
+        if (screenStreamRef.current) {
+          screens.push({ key: "local-screen", name: `${participantName}'s screen`, el: getOrCreateVideoEl("local-screen", screenStreamRef.current), showAvatar: false });
+        }
         latestRemoteParticipantsRef.current.forEach((p) => {
-          if (p.stream) els.push(getOrCreateVideoEl(p.connectionId, p.stream));
+          if (p.stream) tiles.push({ key: p.connectionId, name: p.name, el: getOrCreateVideoEl(p.connectionId, p.stream), showAvatar: !p.cameraOn });
+          if (p.screenShareStream) screens.push({ key: `${p.connectionId}-screen`, name: `${p.name}'s screen`, el: getOrCreateVideoEl(`${p.connectionId}-screen`, p.screenShareStream), showAvatar: false });
         });
 
+        const W = canvas.width;
+        const H = canvas.height;
         ctx.fillStyle = "#000";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, W, H);
 
-        const cols = Math.ceil(Math.sqrt(els.length || 1));
-        const rows = Math.ceil((els.length || 1) / cols);
-        const cellW = canvas.width / cols;
-        const cellH = canvas.height / rows;
-        els.forEach((el, i) => {
-          if (el.readyState < 2) return; // not enough data to draw a frame yet
-          const col = i % cols;
-          const row = Math.floor(i / cols);
-          ctx.drawImage(el, col * cellW, row * cellH, cellW, cellH);
-        });
-      }, 200);
+        const drawTile = (t: Tile, x: number, y: number, w: number, h: number, fit: "cover" | "contain") => {
+          if (!t.showAvatar && t.el.readyState >= 2) drawVideoInBox(ctx, t.el, x, y, w, h, fit);
+          drawTileChrome(ctx, t.name, t.showAvatar, x, y, w, h);
+        };
 
-      recordedTracks.push(...canvas.captureStream(5).getVideoTracks());
+        if (screens.length > 0) {
+          // A screen share is what everyone is looking at - give it most of the frame and put
+          // the people in a strip beside it, like the live call does.
+          const stripW = tiles.length > 0 ? Math.round(W * 0.22) : 0;
+          drawTile(screens[0], 0, 0, W - stripW, H, "contain");
+          if (tiles.length > 0) {
+            const cellH = Math.min(Math.round(stripW * 9 / 16), Math.floor(H / tiles.length));
+            tiles.forEach((t, i) => drawTile(t, W - stripW, i * cellH, stripW, cellH, "cover"));
+          }
+        } else {
+          const cols = Math.ceil(Math.sqrt(tiles.length || 1));
+          const rows = Math.ceil((tiles.length || 1) / cols);
+          const cellW = W / cols;
+          const cellH = H / rows;
+          tiles.forEach((t, i) => drawTile(t, (i % cols) * cellW, Math.floor(i / cols) * cellH, cellW, cellH, "cover"));
+        }
+      }, 66);
+
+      recordedTracks.push(...canvas.captureStream(15).getVideoTracks());
     }
 
     const compositeStream = new MediaStream(recordedTracks);
-    const mimeType = pickRecorderMimeType(includeVideo);
-    const recorder = mimeType ? new MediaRecorder(compositeStream, { mimeType }) : new MediaRecorder(compositeStream);
+    const recorder = createRecorder(compositeStream, includeVideo);
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
@@ -892,7 +1007,7 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     setIsRecording(true);
     setRecordingParticipantId("local");
     clientRef.current?.updateRecordingState(meetingId, true);
-  }, [meetingId]);
+  }, [meetingId, participantName]);
 
   return {
     localStream,

@@ -19,6 +19,7 @@ export default function App() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [participantToken, setParticipantToken] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState({ canShareScreen: false, canRecord: false });
 
   useEffect(() => {
     if (!token) {
@@ -44,6 +45,7 @@ export default function App() {
     setSubmitting(true);
     try {
       const result = await guestApi.mintToken(token, name);
+      setPermissions({ canShareScreen: result.canShareScreen, canRecord: result.canRecord });
       setParticipantToken(result.token);
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Couldn't join this call.");
@@ -75,10 +77,14 @@ export default function App() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = `meeting-recording-${meta.startedAt.toISOString().replace(/[:.]/g, "-")}.webm`;
+            const ext = meta.mimeType.includes("mp4") ? (meta.includesVideo ? "mp4" : "m4a") : "webm";
+            a.download = `meeting-recording-${meta.startedAt.toISOString().replace(/[:.]/g, "-")}.${ext}`;
             a.click();
             URL.revokeObjectURL(url);
           }}
+          canShareScreen={permissions.canShareScreen}
+          canRecord={permissions.canRecord}
+          getInviteLink={preview.scope === "Any" ? () => window.location.href : undefined}
         />
       </div>
     );

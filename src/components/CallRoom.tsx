@@ -6,7 +6,28 @@ import { CallGrid, type CallGridItem } from "./CallGrid";
 import { SidePanel, type SidePanelTab, type SidePanelTabDef } from "./SidePanel";
 import { ParticipantListPanel } from "./ParticipantListPanel";
 import { ChatPanel } from "./ChatPanel";
-import { ParticipantsIcon, ScreenShareIcon, ChatIcon, RecordIcon } from "./icons";
+import { ParticipantsIcon, ScreenShareIcon, ChatIcon, RecordIcon, LinkIcon } from "./icons";
+
+/** Clipboard API needs a secure context and a user gesture; the textarea fallback covers the
+    embedded/older-browser cases where navigator.clipboard is missing or refuses. */
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the legacy path.
+    }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("copy failed");
+}
 
 export interface CallRoomProps extends UseMeetingCallOptions {
   /** Called after leave() has torn down media and the connection - close your own modal/layout here. */
@@ -18,6 +39,17 @@ export interface CallRoomProps extends UseMeetingCallOptions {
   isHost?: boolean;
   onKickParticipant?: (participantId: string) => void;
   onBlockParticipant?: (participantId: string) => void;
+  /** Whether this participant may share their screen. Decided by your app (typically from your
+   * own per-meeting settings) - the SDK only shows or hides the button, and stops a share already
+   * running if this flips to false. Defaults to true (the previous behaviour: everyone). */
+  canShareScreen?: boolean;
+  /** Whether this participant may start a recording. Same contract as canShareScreen. Defaults to
+   * `isHost` (the previous behaviour: organizer only). */
+  canRecord?: boolean;
+  /** Supplies the URL to copy when someone clicks "Copy invite link". The button only appears
+   * when this is provided; return null to say there's nothing to copy. Like Kick/Block, the SDK
+   * never calls your backend itself - your app decides what link is appropriate to hand out. */
+  getInviteLink?: () => string | null | Promise<string | null>;
 }
 
 const KICKED_MESSAGES: Record<string, string> = {
@@ -26,7 +58,11 @@ const KICKED_MESSAGES: Record<string, string> = {
   access_denied: "You're no longer able to join this call.",
 };
 
-export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBlockParticipant, ...callOptions }: CallRoomProps) {
+export function CallRoom({
+  onLeave, className, isHost, onKickParticipant, onBlockParticipant,
+  canShareScreen, canRecord, getInviteLink,
+  ...callOptions
+}: CallRoomProps) {
   const {
     localStream,
     localParticipantName,
@@ -79,6 +115,47 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
   useEffect(() => {
     if (openPanel === "chat") setUnreadChatCount(0);
   }, [openPanel]);
+
+  const shareAllowed = canShareScreen ?? true;
+  const recordAllowed = canRecord ?? !!isHost;
+
+  // Permission can be taken away mid-call (the host app re-checks and flips these props) - an
+  // already-running share or recording must stop, not just lose its button. Stopping a recording
+  // still delivers whatever was captured so far through onRecordingAvailable.
+  useEffect(() => {
+    if (!shareAllowed && isScreenSharing) stopScreenShare();
+  }, [shareAllowed, isScreenSharing, stopScreenShare]);
+
+  useEffect(() => {
+    if (!recordAllowed && isRecording && recordingParticipantId === "local") stopRecording();
+  }, [recordAllowed, isRecording, recordingParticipantId, stopRecording]);
+
+  const [inviteToast, setInviteToast] = useState<string | null>(null);
+  const inviteToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashInviteToast = (message: string) => {
+    setInviteToast(message);
+    if (inviteToastTimerRef.current) clearTimeout(inviteToastTimerRef.current);
+    inviteToastTimerRef.current = setTimeout(() => setInviteToast(null), 2500);
+  };
+
+  useEffect(() => () => {
+    if (inviteToastTimerRef.current) clearTimeout(inviteToastTimerRef.current);
+  }, []);
+
+  const handleCopyInvite = async () => {
+    try {
+      const link = await getInviteLink?.();
+      if (!link) {
+        flashInviteToast("No invite link available");
+        return;
+      }
+      await copyText(link);
+      flashInviteToast("Invite link copied");
+    } catch {
+      flashInviteToast("Couldn't copy the link");
+    }
+  };
 
   const handleLeave = () => {
     leave();
@@ -229,7 +306,29 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
         )}
       </div>
 
-      <div style={{ padding: 16, borderTop: "1px solid var(--cm-border, #333)" }}>
+      <div style={{ position: "relative", padding: 16, borderTop: "1px solid var(--cm-border, #333)" }}>
+        {inviteToast && (
+          <div
+            role="status"
+            style={{
+              position: "absolute",
+              bottom: "100%",
+              left: "50%",
+              transform: "translateX(-50%)",
+              marginBottom: 8,
+              padding: "6px 14px",
+              borderRadius: 999,
+              background: "var(--cm-controlbar-bg, rgba(32,32,32,0.95))",
+              color: "var(--cm-text, #fff)",
+              fontSize: 12,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+              pointerEvents: "none",
+            }}
+          >
+            {inviteToast}
+          </div>
+        )}
         <ControlBar
           micOn={micOn}
           cameraOn={cameraOn}
@@ -242,10 +341,32 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
           onSelectCamera={switchCamera}
           onSelectMicrophone={switchMicrophone}
         >
-          {isHost && (
+          {getInviteLink && (
             <button
               type="button"
-              onClick={() => (isRecording ? stopRecording() : startRecording())}
+              onClick={handleCopyInvite}
+              title="Copy invite link"
+              aria-label="Copy invite link"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 40,
+                height: 40,
+                borderRadius: "50%",
+                border: "none",
+                background: "transparent",
+                color: "var(--cm-text, #fff)",
+                cursor: "pointer",
+              }}
+            >
+              <LinkIcon />
+            </button>
+          )}
+          {recordAllowed && (
+            <button
+              type="button"
+              onClick={() => (isRecording ? stopRecording() : startRecording({ includeVideo: true }))}
               title={isRecording ? "Stop recording" : "Start recording"}
               aria-label={isRecording ? "Stop recording" : "Start recording"}
               aria-pressed={isRecording}
@@ -265,6 +386,7 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
               <RecordIcon />
             </button>
           )}
+          {shareAllowed && (
           <button
             type="button"
             onClick={isScreenSharing ? stopScreenShare : startScreenShare}
@@ -288,6 +410,7 @@ export function CallRoom({ onLeave, className, isHost, onKickParticipant, onBloc
           >
             <ScreenShareIcon />
           </button>
+          )}
           <button
             type="button"
             onClick={() => setOpenPanel((p) => (p === "chat" ? null : "chat"))}

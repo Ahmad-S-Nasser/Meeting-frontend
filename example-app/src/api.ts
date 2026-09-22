@@ -47,6 +47,8 @@ export interface JoinToken {
   expiresAt: string;
   meetingId: string;
   participantName: string;
+  canShareScreen: boolean;
+  canRecord: boolean;
 }
 
 export const guestApi = {
