@@ -45,6 +45,15 @@ export interface KickedState {
   reason?: string;
 }
 
+/** Live, mid-call overrides pushed to this participant's own connection by the organizer
+    (CapabilityChanged) - keyed by capability, undefined until a push for that capability has
+    ever arrived. Absence here does NOT mean "not allowed"; it means "no live override yet,
+    defer to whatever static policy your app passed in (canShareScreen/canRecord)". */
+export interface LiveCapabilityGrants {
+  screenShare?: boolean;
+  record?: boolean;
+}
+
 /** RTT/loss thresholds are deliberately simple - this is a coarse "is this call struggling"
     signal for a UI indicator, not a diagnostic tool. */
 function bucketConnectionQuality(rttMs: number | undefined, lossRatio: number): ConnectionQuality {
@@ -159,6 +168,10 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [joining, setJoining] = useState(true);
   const [kicked, setKicked] = useState<KickedState | null>(null);
+  // No live override until a CapabilityChanged push actually arrives - the static
+  // canShareScreen/canRecord props (owned by CallRoom, not this hook) remain the baseline
+  // until then. See LiveCapabilityGrants.
+  const [liveGrants, setLiveGrants] = useState<LiveCapabilityGrants>({});
   const [availableDevices, setAvailableDevices] = useState<{ cameras: MediaDeviceInfo[]; microphones: MediaDeviceInfo[] }>({ cameras: [], microphones: [] });
   const [selectedCameraId, setSelectedCameraId] = useState<string | undefined>(undefined);
   const [selectedMicId, setSelectedMicId] = useState<string | undefined>(undefined);
@@ -621,6 +634,13 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
         setKicked({ type: "blocked", reason: reason ?? undefined });
       }));
 
+      // Same shape as Kicked/Blocked but far less drastic - merges into liveGrants rather than
+      // tearing anything down. CallRoom is the one that decides what to do about an
+      // already-running share/recording when its resolved shareAllowed/recordAllowed flips.
+      unsubscribers.push(client.onCapabilityChanged(({ capability, allowed }) => {
+        setLiveGrants((prev) => ({ ...prev, [capability]: allowed }));
+      }));
+
       // withAutomaticReconnect() gets the transport back, but the server already dropped this
       // connection from the room and told everyone else this participant left the moment the
       // old connection died (Hub.OnDisconnectedAsync) - resuming isn't enough, this has to
@@ -1022,6 +1042,7 @@ export function useMeetingCall(options: UseMeetingCallOptions) {
     mediaError,
     joining,
     kicked,
+    liveGrants,
     availableDevices,
     selectedCameraId,
     selectedMicId,

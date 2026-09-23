@@ -23,6 +23,7 @@ type RecordingStateChangedHandler = (connectionId: string, isRecording: boolean)
 type AccessDeniedHandler = (payload: { reason: string }) => void;
 type KickedHandler = (payload: { reason?: string | null }) => void;
 type BlockedHandler = (payload: { reason?: string | null }) => void;
+type CapabilityChangedHandler = (payload: { capability: "screenShare" | "record"; allowed: boolean }) => void;
 
 /**
  * A thin, typed wrapper around the one SignalR hub this SDK talks to - MeetingCallHub. Unlike
@@ -187,6 +188,15 @@ export class SignalingClient {
   onBlocked(handler: BlockedHandler): () => void {
     this.connection.on("Blocked", handler);
     return () => this.connection.off("Blocked", handler);
+  }
+
+  /** Pushed by the organizer granting or revoking a screen-share/recording capability live,
+   * mid-call - to this participant's own connection only, never a room-wide broadcast. Unlike
+   * Kicked/Blocked this doesn't end the call; the host app (via useMeetingCall/CallRoom) just
+   * folds it into whatever gate already controls the share/record buttons. */
+  onCapabilityChanged(handler: CapabilityChangedHandler): () => void {
+    this.connection.on("CapabilityChanged", handler);
+    return () => this.connection.off("CapabilityChanged", handler);
   }
 
   /** Fires after withAutomaticReconnect() re-establishes the connection - with a NEW

@@ -41,11 +41,24 @@ export interface CallRoomProps extends UseMeetingCallOptions {
   onBlockParticipant?: (participantId: string) => void;
   /** Whether this participant may share their screen. Decided by your app (typically from your
    * own per-meeting settings) - the SDK only shows or hides the button, and stops a share already
-   * running if this flips to false. Defaults to true (the previous behaviour: everyone). */
+   * running if this flips to false. Defaults to true (the previous behaviour: everyone).
+   * This is the static, pre-meeting baseline; a live CapabilityChanged push from the organizer
+   * (see onGrantScreenShare below) overrides it once one arrives - see shareAllowed. */
   canShareScreen?: boolean;
-  /** Whether this participant may start a recording. Same contract as canShareScreen. Defaults to
-   * `isHost` (the previous behaviour: organizer only). */
+  /** Whether this participant may start a recording. Same contract as canShareScreen, including
+   * the live-override relationship with onGrantRecord. Defaults to `isHost` (the previous
+   * behaviour: organizer only). */
   canRecord?: boolean;
+  /** Called when the organizer grants or revokes a participant's live screen-share capability
+   * mid-call - a Teams/Zoom-style override on top of the static canShareScreen policy, pushed to
+   * that one participant's connection only. The SDK never calls your backend itself - it just
+   * exposes the hooks; wire this to whatever REST endpoint your backend exposes for pushing the
+   * CapabilityChanged hub message. `allowed` reflects the SDK's own local, optimistic toggle
+   * state for this button (there is no channel back confirming the participant's actual live
+   * state), so treat it as "what was last sent", not a live-confirmed status. */
+  onGrantScreenShare?: (participantId: string, allowed: boolean) => void;
+  /** Same contract as onGrantScreenShare, for recording. */
+  onGrantRecord?: (participantId: string, allowed: boolean) => void;
   /** Supplies the URL to copy when someone clicks "Copy invite link". The button only appears
    * when this is provided; return null to say there's nothing to copy. Like Kick/Block, the SDK
    * never calls your backend itself - your app decides what link is appropriate to hand out. */
@@ -60,7 +73,7 @@ const KICKED_MESSAGES: Record<string, string> = {
 
 export function CallRoom({
   onLeave, className, isHost, onKickParticipant, onBlockParticipant,
-  canShareScreen, canRecord, getInviteLink,
+  canShareScreen, canRecord, onGrantScreenShare, onGrantRecord, getInviteLink,
   ...callOptions
 }: CallRoomProps) {
   const {
@@ -76,6 +89,7 @@ export function CallRoom({
     mediaError,
     joining,
     kicked,
+    liveGrants,
     availableDevices,
     selectedCameraId,
     selectedMicId,
@@ -94,6 +108,13 @@ export function CallRoom({
   } = useMeetingCall(callOptions);
 
   const [volumes, setVolumes] = useState<Record<string, number>>({});
+  // Best-effort, organizer-side-only display of what THIS organizer has last sent a given
+  // remote participant via onGrantScreenShare/onGrantRecord - keyed by participantId. There's
+  // no live channel back from a remote participant's own connection confirming their actual
+  // current capability state (that state lives entirely on their side), so this is purely a
+  // local, optimistic record of clicks, not a synced/confirmed value - it resets on refresh and
+  // won't reflect a grant sent from a different organizer tab/session.
+  const [sentGrants, setSentGrants] = useState<Record<string, { screenShare?: boolean; record?: boolean }>>({});
   // Local-only UI state - never broadcast, so pinning is each viewer's own choice and has no
   // effect on what anyone else sees.
   const [pinnedConnectionId, setPinnedConnectionId] = useState<string | null>(null);
@@ -116,8 +137,13 @@ export function CallRoom({
     if (openPanel === "chat") setUnreadChatCount(0);
   }, [openPanel]);
 
-  const shareAllowed = canShareScreen ?? true;
-  const recordAllowed = canRecord ?? !!isHost;
+  // A live CapabilityChanged push (liveGrants) is an override once one has arrived for this
+  // capability; until then this falls back to the static, pre-meeting canShareScreen/canRecord
+  // props exactly as before. This is about the LOCAL viewer's own capabilities (the hub only
+  // ever pushes CapabilityChanged to one participant's own connection), unrelated to the
+  // grant-buttons-on-remote-tiles UI below, which is a separate, organizer-side concern.
+  const shareAllowed = liveGrants.screenShare ?? canShareScreen ?? true;
+  const recordAllowed = liveGrants.record ?? canRecord ?? !!isHost;
 
   // Permission can be taken away mid-call (the host app re-checks and flips these props) - an
   // already-running share or recording must stop, not just lose its button. Stopping a recording
@@ -216,6 +242,7 @@ export function CallRoom({
         content: <CallTile stream={p.screenShareStream} name={p.name} micOn cameraOn variant="screen" />,
       });
     }
+    const granted = sentGrants[p.participantId] ?? {};
     gridItems.push({
       key: p.connectionId,
       focused: !anySharing && p.connectionId === pinnedConnectionId,
@@ -230,6 +257,18 @@ export function CallRoom({
           isHost={isHost}
           onKick={onKickParticipant ? () => onKickParticipant(p.participantId) : undefined}
           onBlock={onBlockParticipant ? () => onBlockParticipant(p.participantId) : undefined}
+          onGrantScreenShare={onGrantScreenShare ? () => {
+            const next = !granted.screenShare;
+            setSentGrants((prev) => ({ ...prev, [p.participantId]: { ...prev[p.participantId], screenShare: next } }));
+            onGrantScreenShare(p.participantId, next);
+          } : undefined}
+          screenShareGranted={granted.screenShare}
+          onGrantRecord={onGrantRecord ? () => {
+            const next = !granted.record;
+            setSentGrants((prev) => ({ ...prev, [p.participantId]: { ...prev[p.participantId], record: next } }));
+            onGrantRecord(p.participantId, next);
+          } : undefined}
+          recordGranted={granted.record}
           pinned={p.connectionId === pinnedConnectionId}
           onTogglePin={() => setPinnedConnectionId((id) => (id === p.connectionId ? null : p.connectionId))}
           connectionQuality={p.connectionQuality}

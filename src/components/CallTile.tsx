@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MicOffIcon, CameraOffIcon, VolumeIcon, PinIcon } from "./icons";
+import { MicOffIcon, CameraOffIcon, VolumeIcon, PinIcon, ScreenShareIcon, RecordIcon } from "./icons";
 import { ConnectionQualityIndicator } from "./ConnectionQualityIndicator";
 import type { ConnectionQuality } from "../types";
 
@@ -17,6 +17,15 @@ export interface CallTileProps {
   isHost?: boolean;
   onKick?: () => void;
   onBlock?: () => void;
+  /** Grant/revoke this participant's live screen-share capability, mid-call. There's no channel
+      back from a remote participant's own connection confirming their actual current state, so
+      `screenShareGranted` is only the SDK's best-effort local record of what this organizer last
+      sent them - not a live-confirmed status. Same isHost gating as Kick/Block. */
+  onGrantScreenShare?: () => void;
+  screenShareGranted?: boolean;
+  /** Same contract as onGrantScreenShare/screenShareGranted, for recording. */
+  onGrantRecord?: () => void;
+  recordGranted?: boolean;
   /** Pinning is local-only UI state (see CallRoom) - not broadcast, so every viewer can pin
       independently without affecting anyone else's view. */
   pinned?: boolean;
@@ -33,6 +42,7 @@ export interface CallTileProps {
 export function CallTile({
   stream, name, micOn, cameraOn, isLocal = false, className,
   volume, onVolumeChange, isHost = false, onKick, onBlock,
+  onGrantScreenShare, screenShareGranted = false, onGrantRecord, recordGranted = false,
   pinned = false, onTogglePin, connectionQuality, variant = "camera",
 }: CallTileProps) {
   const isScreen = variant === "screen";
@@ -172,6 +182,44 @@ export function CallTile({
           </span>
         )}
 
+        {!isScreen && isHost && !isLocal && (onGrantScreenShare || onGrantRecord) && (
+          <>
+            {onGrantScreenShare && (
+              <button
+                type="button"
+                onClick={onGrantScreenShare}
+                title={screenShareGranted ? "Revoke screen share (as far as this SDK knows - see screenShareGranted docs)" : "Allow screen share"}
+                aria-pressed={screenShareGranted}
+                style={{
+                  display: "flex", alignItems: "center", gap: 3, fontSize: 11, padding: "1px 6px",
+                  borderRadius: 4, border: "none", cursor: "pointer",
+                  background: screenShareGranted ? "var(--cm-accent, #2563eb)" : "rgba(255,255,255,0.15)",
+                  color: "#fff",
+                }}
+              >
+                <ScreenShareIcon size={11} />
+                {screenShareGranted ? "Sharing allowed" : "Allow share"}
+              </button>
+            )}
+            {onGrantRecord && (
+              <button
+                type="button"
+                onClick={onGrantRecord}
+                title={recordGranted ? "Revoke recording (as far as this SDK knows - see recordGranted docs)" : "Allow recording"}
+                aria-pressed={recordGranted}
+                style={{
+                  display: "flex", alignItems: "center", gap: 3, fontSize: 11, padding: "1px 6px",
+                  borderRadius: 4, border: "none", cursor: "pointer",
+                  background: recordGranted ? "var(--cm-accent, #2563eb)" : "rgba(255,255,255,0.15)",
+                  color: "#fff",
+                }}
+              >
+                <RecordIcon size={11} />
+                {recordGranted ? "Recording allowed" : "Allow record"}
+              </button>
+            )}
+          </>
+        )}
         {!isScreen && isHost && !isLocal && (onKick || onBlock) && (
           <>
             {onKick && (
